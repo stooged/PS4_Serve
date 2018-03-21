@@ -1,6 +1,16 @@
 package stooged.ps4serve;
 
+import android.app.Activity;
 import android.content.Context;
+import android.os.Environment;
+import android.widget.Toast;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.net.ConnectException;
+import java.net.Socket;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -12,6 +22,10 @@ import fi.iki.elonen.NanoHTTPD;
 public class Server extends NanoHTTPD {
 
     private Context wContext;
+    private String remoteIP;
+    private Timer timer;
+    private TimerTask timerTask;
+    private boolean isWaiting = false;
 
     public Server(Context context, int SvrPort)
     {
@@ -48,9 +62,16 @@ public class Server extends NanoHTTPD {
         }
 
         File f = new File(Utils.getDataDir(wContext) + uri);
-
         if (uri.toLowerCase().contains(f.getName().toLowerCase()))
         {
+            if (f.getName().toLowerCase().equals("index.html")) {
+                remoteIP = session.getRemoteIpAddress();
+                isWaiting = true;
+                startTimer();
+                Utils.SaveSetting(wContext,"REMHOST",remoteIP);
+                showToast("Sending payload\nIP: " + remoteIP, Utils.Info);
+                sendPayload(Utils.GetSetting(wContext,"PAYLOAD", Environment.getExternalStorageDirectory().toString() + "/PS4_Payloads/ps4-hen-vtx.bin"), remoteIP, 9020);
+            }
             return serveFile(f.getName(), headers, f);
         }
         else
@@ -103,7 +124,6 @@ public class Server extends NanoHTTPD {
                         }
                     };
                     fis.skip(startFrom);
-
                     res = createResponse(Response.Status.PARTIAL_CONTENT, mime, fis);
                     res.addHeader("Content-Length", "" + dataLen);
                     res.addHeader("Content-Range", "bytes " + startFrom + "-" + endAt + "/" + fileLen);
@@ -124,6 +144,49 @@ public class Server extends NanoHTTPD {
         return (res == null) ? getResponse("Error 404: File not found") : res;
     }
 
+    private void sendPayload(final String filePath, final String host, final int port)  {
+        new Thread(new Runnable() {
+            public void run() {
+                while(isWaiting)
+                {
+                    try {
+                        File f = new File(filePath);
+                        Socket socket = new Socket(host, port);
+                        isWaiting = false;
+                        stoptimertask();
+                        if(f.exists())
+                        {
+                            BufferedOutputStream outStream = new BufferedOutputStream(socket.getOutputStream());
+                            BufferedInputStream inStream = new BufferedInputStream(new FileInputStream(f));
+                            byte[] buffer = new byte[1024];
+                            for (int read = inStream.read(buffer); read >= 0; read = inStream.read(buffer)) {
+                                outStream.write(buffer, 0, read);
+                            }
+                            inStream.close();
+                            outStream.close();
+                            socket.close();
+                            showToast("Payload sent", Utils.Success);
+                        }
+                        else
+                        {
+                            socket.close();
+                            showToast("Error: Payload missing\nSelect a payload to send first", Utils.Error);
+                        }
+                    }
+                    catch(ConnectException e)
+                    {
+                        try
+                        {
+                            Thread.sleep(1000);
+                        }
+                        catch(InterruptedException ignored){}
+                    }
+                    catch (IOException ignored){}
+                }
+            }
+        }).start();
+    }
+
     private Response createResponse(Response.Status status, String mimeType, InputStream message) {
         Response res = NanoHTTPD.newChunkedResponse(status, mimeType, message);
         res.addHeader("Accept-Ranges", "bytes");
@@ -139,4 +202,60 @@ public class Server extends NanoHTTPD {
     private Response getResponse(String message) {
         return createResponse(Response.Status.OK, "text/plain", message);
     }
+
+    public void startTimer() {
+        timer = new Timer();
+        initializeTimerTask();
+        timer.schedule(timerTask, 15000, 30000);
+    }
+
+    public void initializeTimerTask() {
+        timerTask = new TimerTask() {
+            public void run() {
+                stoptimertask();
+                isWaiting = false;
+                showToast("Failed to send payload", Utils.Error);
+            }
+        };
+    }
+
+    public void stoptimertask() {
+        if (timer != null) {
+            timer.cancel();
+            timer = null;
+        }
+    }
+
+    private void showToast(final String tMessage, final int tType){
+        ((Activity)wContext).runOnUiThread(new Runnable()
+        {
+            public void run()
+            {
+                switch (tType) {
+                    case Utils.Success: {
+                        Toasty.success(wContext, tMessage, Toast.LENGTH_SHORT, true).show();
+                        break;
+                    }
+                    case Utils.Info: {
+                        Toasty.info(wContext, tMessage, Toast.LENGTH_SHORT, true).show();
+                        break;
+                    }
+                    case Utils.Error: {
+                        Toasty.error(wContext, tMessage, Toast.LENGTH_SHORT, true).show();
+                        break;
+                    }
+                    case Utils.Warning: {
+                        Toasty.warning(wContext, tMessage, Toast.LENGTH_SHORT, true).show();
+                        break;
+                    }
+                    default: {
+                        Toasty.normal(wContext, tMessage, Toast.LENGTH_SHORT).show();
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+
 }

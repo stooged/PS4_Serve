@@ -1,26 +1,38 @@
 package stooged.ps4serve;
 
-import android.graphics.Color;
-import android.support.v7.app.AppCompatActivity;
+import android.annotation.TargetApi;
+import android.app.Activity;
+import android.app.ProgressDialog;
+import android.content.Intent;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Message;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
-import android.widget.Button;
+import android.widget.AdapterView;
+import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
+import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import fi.iki.elonen.NanoHTTPD;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
     NanoHTTPD webServer;
+    TextView text1,text2,text3;
+    ListView listView;
+    ListAdapter listAdapterObject;
+    sFile[] sFiles;
+    File dir;
+    ProgressDialog progress;
+    String LocIp;
 
-    TextView text1,text2;
-    Button btn1,btn2,btn3,btn4;
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        KillWebServer();
+        StopServer();
         finish();
     }
 
@@ -29,57 +41,22 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.activity_main);
-        SetPermissions();
-
-        text1 = findViewById(R.id.text1);
-        text2 = findViewById(R.id.text2);
-        btn1 = findViewById(R.id.btn1);
-        btn2 = findViewById(R.id.btn2);
-        btn3 = findViewById(R.id.btn3);
-        btn4 = findViewById(R.id.btn4);
-
-        text1.setText("http://" +   Utils.getIp()  + ":8080/");
-
-        Utils.createResFile(this,R.raw.index_html,"index.html");
-        Utils.createResFile(this,R.raw.expl_js,"expl.js");
-        Utils.createResFile(this,R.raw.fix_js,"fix.js");
-        Utils.createResFile(this,R.raw.gadgets_js,"gadgets.js");
-        Utils.createResFile(this,R.raw.rop_js,"rop.js");
-        Utils.createResFile(this,R.raw.syscalls_js,"syscalls.js");
-
-        switch (Utils.GetSetting(this,"SELECTED","HEN"))
-        {
-            case "HEN":
-                text2.setText("Selected: " + btn1.getText());
-                btn1.setBackgroundColor(Color.parseColor("#ce923e"));
-                Utils.createResFile(this,R.raw.hen_pl,"payload.js");
-                break;
-            case "FTP":
-                text2.setText("Selected: " + btn2.getText());
-                btn2.setBackgroundColor(Color.parseColor("#ce923e"));
-                Utils.createResFile(this,R.raw.ftp_pl,"payload.js");
-                break;
-            case "DMP":
-                text2.setText("Selected: " + btn3.getText());
-                btn3.setBackgroundColor(Color.parseColor("#ce923e"));
-                Utils.createResFile(this,R.raw.dump_pl,"payload.js");
-                break;
-            case "BAK":
-                text2.setText("Selected: " + btn4.getText());
-                btn4.setBackgroundColor(Color.parseColor("#ce923e"));
-                Utils.createResFile(this,R.raw.backup_pl,"payload.js");
-                break;
-            default:
-                text2.setText("Selected: " + btn1.getText());
-                btn1.setBackgroundColor(Color.parseColor("#ce923e"));
-                Utils.createResFile(this,R.raw.hen_pl,"payload.js");
-                break;
+        text1 = (TextView) findViewById(R.id.text1);
+        text2 = (TextView) findViewById(R.id.text2);
+        text3 = (TextView) findViewById(R.id.text3);
+        text1.setTextColor(0xFF33b5e5);
+        text3.setTextColor(0xFFFFFFFF);
+        LocIp = Utils.getIp();
+        text2.setText(Utils.GetSetting(this,"LOADED","Selected: ps4-hen-vtx"));
+        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.LOLLIPOP_MR1) {
+            SetPermissions();
         }
-
-        StartWebServer();
+        else {
+            initApp();
+        }
     }
 
-    private void KillWebServer() {
+    private void StopServer() {
         if (webServer != null) {
             if (webServer.isAlive()) {
                 webServer.closeAllConnections();
@@ -89,78 +66,185 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void StartWebServer()
+    private void StartServer()
     {
         webServer = new Server(this,8080);
         try {
             webServer.start();
+            text1.setText("http://" +   LocIp + ":8080/");
         } catch (IOException e) {
             e.printStackTrace();
-        }
-    }
-
-    private void StopWebServer()
-    {
-        if (webServer != null) {
-            if (webServer.isAlive()) {
-                webServer.closeAllConnections();
-                webServer.stop();
+            Utils.showToast(MainActivity.this,getBaseContext(),"Failed to start server on port 8080\nTrying to use port 9090", Utils.Warning);
+            try {
+                webServer = null;
+                webServer = new Server(this,9090);
+                webServer.start();
+                text1.setText("http://" +   LocIp + ":9090/");
+            }
+            catch (IOException ignored)
+            {
+                Utils.showToast(MainActivity.this,getBaseContext(),"Failed to start server\nPort 8080 and 9090 might be in use by another app", Utils.Error);
+                text1.setTextColor(0xFFD50000);
+                text3.setTextColor(0xFFD50000);
+                text3.setText("Error: ");
+                text1.setText("Port 8080 and 9090 are blocked");
             }
         }
     }
 
+    private void initApp()
+    {
+        new Thread(new Runnable() {
+            public void run() {
+        File PayloadDir = new File(Environment.getExternalStorageDirectory().toString() + "/PS4_Payloads/");
+        if (!PayloadDir.exists()) {
+            if (!PayloadDir.mkdirs()) {
+                Utils.showToast(MainActivity.this,getBaseContext(),"Failed to create directory", Utils.Error);
+                return;
+            }
+        }
+        File[] contents = PayloadDir.listFiles();
+        if (contents == null) {
+            Utils.showToast(MainActivity.this,getBaseContext(),"Failed to read directory", Utils.Error);
+        }
+        else if (contents.length == 0) {
+            Utils.createResFile(getBaseContext(),R.raw.hen_pl,"ps4-hen-vtx.bin",false);
+            Utils.createResFile(getBaseContext(),R.raw.ftp_pl,"ps4-ftp-vtx.bin",false);
+            Utils.createResFile(getBaseContext(),R.raw.dump_pl,"ps4-dumper-vtx.bin",false);
+            Utils.createResFile(getBaseContext(),R.raw.backup_pl,"DB_SG_Backup.bin",false);
+            Utils.createResFile(getBaseContext(),R.raw.en_vr_pl,"ps4-hen-VR.bin",false);
+            Utils.SaveSetting(getBaseContext(),"PAYLOAD",Environment.getExternalStorageDirectory().toString() + "/PS4_Payloads/ps4-hen-vtx.bin");
+            Utils.SaveSetting(getBaseContext(),"LOADED","Selected: ps4-hen-vtx");
+            Utils.SaveSetting(getBaseContext(),"VERSION",BuildConfig.VERSION_CODE);
+            MainActivity.this.runOnUiThread(new Runnable() {
+                public void run() {
+                    text2.setText("Selected: ps4-hen-vtx");
+                }
+            });
+        }
+        else
+        {
+            if (Utils.GetSetting(getBaseContext(),"VERSION",10) < BuildConfig.VERSION_CODE)
+            {
+                Utils.SaveSetting(getBaseContext(),"VERSION",BuildConfig.VERSION_CODE);
+                Utils.createResFile(getBaseContext(),R.raw.hen_pl,"ps4-hen-vtx.bin",false);
+                Utils.createResFile(getBaseContext(),R.raw.ftp_pl,"ps4-ftp-vtx.bin",false);
+                Utils.createResFile(getBaseContext(),R.raw.dump_pl,"ps4-dumper-vtx.bin",false);
+                Utils.createResFile(getBaseContext(),R.raw.backup_pl,"DB_SG_Backup.bin",false);
+                Utils.createResFile(getBaseContext(),R.raw.en_vr_pl,"ps4-hen-VR.bin",false);
+                Utils.showToast(MainActivity.this,getBaseContext(),"Updated payloads", Utils.Info);
+            }
+        }
+        Utils.createResFile(getBaseContext(),R.raw.index_html,"index.html",true);
+        Utils.createResFile(getBaseContext(),R.raw.expl_js,"expl.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.fix_js,"fix.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.gadgets_js,"gadgets.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.rop_js,"rop.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.syscalls_js,"syscalls.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.loader_js,"loader.js",true);
+        Utils.createResFile(getBaseContext(),R.raw.prisonbreak_js,"prisonbreak.js",true);
+            }
+        }).start();
+        loadPayloadList();
+        StartServer();
+    }
+
+    @TargetApi(23)
     private void SetPermissions() {
-        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.LOLLIPOP_MR1) {
-            String[] perms = {"android.permission.INTERNET", "android.permission.ACCESS_WIFI_STATE", "android.permission.ACCESS_NETWORK_STATE"};
+            String[] perms = {"android.permission.INTERNET", "android.permission.ACCESS_WIFI_STATE", "android.permission.ACCESS_NETWORK_STATE", "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"};
             int permsRequestCode = 200;
             requestPermissions(perms, permsRequestCode);
+    }
+
+    public void onRequestPermissionsResult(int permsRequestCode, String[] permissions, int[] grantResults){
+        switch(permsRequestCode){
+            case 200:
+                initApp();
+                break;
         }
     }
 
+    private void loadPayloadList() {
+
+        progress = new ProgressDialog(this);
+        progress.setMessage("Loading...");
+        progress.show();
+        dir = new File(Environment.getExternalStorageDirectory().toString() + "/PS4_Payloads");
+        listView = (ListView) findViewById(R.id.content);
+        if (!dir.canRead()) {
+            Utils.showToast(MainActivity.this,this,"Error reading directory", Utils.Error);
+            return;
+        }
+
+        new Thread(new Runnable() {
+                public void run() {
+                    final ArrayList<File> files = filter(dir.listFiles());
+                    sFiles = new sFile[files.size()];
+                    for (int i = 0; i < files.size(); i++) {
+                        sFiles[i] = new sFile();
+                        if (files.get(i).getName().endsWith("/") || files.get(i).getName().endsWith("\\")) {
+                            sFiles[i].label = files.get(i).getName().substring(0, files.get(i).getName().length() - 1);
+                        } else {
+                            sFiles[i].label = files.get(i).getName().substring(0,files.get(i).getName().length()- 4);
+                        }
+                        sFiles[i].name = files.get(i).getPath();
+                        sFiles[i].lFile = files.get(i);
+                        sFiles[i].icon = getResources().getDrawable(R.drawable.binico);
+                    }
+                    listAdapterObject = new ListAdapter(getBaseContext(), sFiles);
+                    MainActivity.this.runOnUiThread(new Runnable() {
+                        public void run() {
+                            listView.setAdapter(listAdapterObject);
+                        }
+                    });
+                    new Sorter().sort(sFiles);
+                    handler.sendEmptyMessage(0);
+                }
+            }).start();
+
+            listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                @Override
+                public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                    TextView FileUrl = (TextView) view.findViewById(R.id.label);
+                    File selFile = new File(FileUrl.getText().toString());
+                    if (!selFile.isDirectory()) {
+                        Utils.SaveSetting(getBaseContext(),"PAYLOAD",selFile.getPath());
+                        Utils.showToast(MainActivity.this,MainActivity.this,"Selected: " + selFile.getName().substring(0,selFile.getName().length()- 4), Utils.Info);
+                        text2.setText("Selected: " + selFile.getName().substring(0,selFile.getName().length()- 4));
+                        Utils.SaveSetting(getBaseContext(),"LOADED","Selected: " + selFile.getName().substring(0,selFile.getName().length()- 4));
+                    }
+                }
+            });
+    }
+
+     Handler handler = new Handler(new Handler.Callback() {
+         @Override
+         public boolean handleMessage(Message msg) {
+             if (progress!=null) {
+                 if (progress.isShowing()) {
+                     progress.dismiss();
+                 }
+             }
+             return false;
+         }
+     });
+
+    public ArrayList<File> filter(File[] file_list) {
+        ArrayList<File> files = new ArrayList<>();
+        for(File file: file_list) {
+            if (file.isDirectory()) {
+            }else{
+                if (file.getName().toLowerCase().endsWith(".bin")) {
+                    files.add(file);
+                }
+            }
+        }
+        return files;
+    }
+
     public void btn1_Click(View view) {
-        text2.setText("Selected: " + btn1.getText());
-        btn1.setBackgroundColor(Color.parseColor("#ce923e"));
-        btn2.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn3.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn4.setBackgroundColor(Color.parseColor("#0099cc"));
-        Utils.createResFile(this,R.raw.hen_pl,"payload.js");
-        Utils.SaveSetting(this,"SELECTED","HEN");
-        Utils.ShowToast(this,"HEN payload Selected", Toast.LENGTH_SHORT);
+        Intent intent = new Intent(this, ElfActivity.class);
+        startActivity(intent);
     }
-
-    public void btn2_Click(View view) {
-        text2.setText("Selected: " + btn2.getText());
-        btn2.setBackgroundColor(Color.parseColor("#ce923e"));
-        btn1.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn3.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn4.setBackgroundColor(Color.parseColor("#0099cc"));
-        Utils.createResFile(this,R.raw.ftp_pl,"payload.js");
-        Utils.SaveSetting(this,"SELECTED","FTP");
-        Utils.ShowToast(this,"FTP payload Selected", Toast.LENGTH_SHORT);
-    }
-
-    public void btn3_Click(View view) {
-        text2.setText("Selected: " + btn3.getText());
-        btn3.setBackgroundColor(Color.parseColor("#ce923e"));
-        btn2.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn1.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn4.setBackgroundColor(Color.parseColor("#0099cc"));
-        Utils.createResFile(this,R.raw.dump_pl,"payload.js");
-        Utils.SaveSetting(this,"SELECTED","DMP");
-        Utils.ShowToast(this,"Dumper payload Selected", Toast.LENGTH_SHORT);
-    }
-
-    public void btn4_Click(View view) {
-        text2.setText("Selected: " + btn4.getText());
-        btn4.setBackgroundColor(Color.parseColor("#ce923e"));
-        btn2.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn3.setBackgroundColor(Color.parseColor("#0099cc"));
-        btn1.setBackgroundColor(Color.parseColor("#0099cc"));
-        Utils.createResFile(this,R.raw.backup_pl,"payload.js");
-        Utils.SaveSetting(this,"SELECTED","BAK");
-        Utils.ShowToast(this,"Backup payload Selected", Toast.LENGTH_SHORT);
-    }
-
-
-
 }
+
